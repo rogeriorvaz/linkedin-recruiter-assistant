@@ -1,0 +1,4 @@
+.venv/*
+path/*
+src/linkedin_recruiter_assistant/__pycache__/*
+src/linkedin_recruiter_assistant.egg-info/*

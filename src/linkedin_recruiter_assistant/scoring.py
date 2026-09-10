@@ -1,8 +1,4 @@
-from .config import (
-    RECRUITMENT_COMPANY_TERMS,
-    SENIOR_TERMS,
-    TECHNOLOGY_TERMS,
-)
+from .config import RECRUITMENT_COMPANY_TERMS, SENIOR_TERMS, TECHNOLOGY_TERMS
 from .recruiter import Recruiter, contains_any, normalise, is_current_recruiter
 
 

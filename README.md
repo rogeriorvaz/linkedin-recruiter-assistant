@@ -2,22 +2,35 @@
 
 Browser-assisted research and connection workflow for finding relevant UK technology recruiters on LinkedIn.
 
-## Workflow
+## Search-first workflow
 
-The application searches for recruiter profiles, verifies the current role conservatively, stores candidates in CSV, and prepares the LinkedIn connection request.
+The application now uses the LinkedIn **People search results page as the primary data source**. It does not open each recruiter profile just to determine whether the person is relevant.
 
-For a qualified recruiter the browser workflow is:
+From each search result card it reads:
 
-1. Open the recruiter profile.
-2. Click **Connect** automatically.
-3. Click **Add a note** automatically.
-4. Enter the generated connection message automatically.
+- Name
+- Headline
+- Current role and company when LinkedIn exposes a `Current:` line
+- Location
+- Connection state such as Connect, Pending or Connected
+- Profile URL
+
+A recruiter profile is opened only as a fallback when the search result card does not expose a usable Connect button.
+
+## Connection workflow
+
+For a qualified recruiter:
+
+1. Click **Connect** directly on the People search result card.
+2. If the card has no usable Connect button, open the profile and try Connect there.
+3. Click **Add a note**.
+4. Enter the generated connection message.
 5. Stop and wait for you to review and click **Send** manually.
 6. Press ENTER in the terminal after sending.
 7. Save the result to `data/recruiters.csv`.
-8. Immediately continue to the next recruiter.
+8. Continue immediately to the next recruiter.
 
-There is deliberately **no random delay** between recruiters because the final Send action is manual.
+There is no artificial random delay.
 
 ## Setup
 
@@ -42,10 +55,12 @@ linkedin-recruiter-assistant
 
 ## CSV persistence
 
-Recruiters are saved when discovered, before connection preparation, and after the final manual Send confirmation. The application verifies each CSV write.
+Recruiters are saved as soon as their People search result is parsed. They are then updated as they are qualified, skipped, or processed. Each write is verified.
 
-`data/recruiters.csv` is intentionally ignored by Git because it can contain personal recruiter information. Use `data/recruiters.example.csv` as the committed template.
+`data/recruiters.csv` is ignored by Git because it can contain personal recruiter information. Use `data/recruiters.example.csv` as the committed template.
 
-## Important limitation
+## LinkedIn UI changes
 
-LinkedIn's interface can change. Current-role extraction and button detection therefore use conservative heuristics and may require maintenance when LinkedIn changes its UI. The application does not click **Send** automatically.
+LinkedIn can change its page structure and accessible labels. The People search parser therefore uses Playwright locators and conservative fallbacks. If the search card structure changes, `linkedin.py` is the main file that will need updating.
+
+The final **Send** action is intentionally manual.

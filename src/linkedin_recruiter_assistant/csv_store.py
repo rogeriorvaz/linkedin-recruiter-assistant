@@ -58,6 +58,5 @@ class CsvStore:
         os.replace(temp_name, self.path)
 
     def _verify_saved(self, profile_url: str):
-        rows = self.load_all()
-        if profile_url not in rows:
+        if profile_url not in self.load_all():
             raise IOError(f"CSV write verification failed for {profile_url}")

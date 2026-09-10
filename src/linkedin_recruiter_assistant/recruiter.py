@@ -38,8 +38,6 @@ class Recruiter:
 
 
 def is_current_recruiter(current_role: str, current_company: str = "") -> bool:
-    # Only the explicitly extracted CURRENT role is considered.
-    # Do not infer current employment from recommendations, About text, or page-wide text.
     role = normalise(current_role)
     if not role:
         return False

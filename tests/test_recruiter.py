@@ -2,7 +2,7 @@ from linkedin_recruiter_assistant.recruiter import is_current_recruiter
 
 
 def test_current_recruiter():
-    assert is_current_recruiter("Technology Recruiter")
+    assert is_current_recruiter("Technical Recruiter", "Index")
 
 
 def test_non_recruiter():

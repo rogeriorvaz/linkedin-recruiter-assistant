@@ -26,56 +26,66 @@ class LinkedInClient:
             pass
 
     def get_search_cards(self, max_results=MAX_RESULTS_PER_TERM):
-        """Find LinkedIn People search result cards without relying on CSS classes."""
+        """Find People search results from profile links and their nearest result containers.
+
+        This deliberately avoids LinkedIn-specific CSS class names. The primary
+        anchor is the member profile URL, which is stable enough for this use.
+        """
         profile_links = self.page.locator('a[href*="/in/"]')
         link_count = profile_links.count()
         print(f"Profile links found: {link_count}")
 
-        # Build candidate <li> elements containing profile links and buttons.
-        # LinkedIn's result-card class names change, but the result remains a
-        # list item with a profile link and an action button.
-        list_items = self.page.locator("li").filter(
-            has=self.page.locator('a[href*="/in/"]')
-        ).filter(
-            has=self.page.locator("button")
-        )
-
-        candidates = {}
-        for i in range(list_items.count()):
-            item = list_items.nth(i)
+        if link_count == 0:
+            print("WARNING: No /in/ profile links were found on the page.")
             try:
-                links = item.locator('a[href*="/in/"]')
-                if links.count() == 0:
+                print(f"Current URL: {self.page.url}")
+                print(f"Page title: {self.page.title()}")
+            except Exception:
+                pass
+            return []
+
+        cards = []
+        seen = set()
+
+        for i in range(min(link_count, max_results * 3)):
+            link = profile_links.nth(i)
+            try:
+                href = (link.get_attribute("href") or "").split("?")[0].strip()
+                if not href or href in seen:
                     continue
 
-                href = (links.first.get_attribute("href") or "").split("?")[0].strip()
-                if not href:
+                # Walk up the DOM until we reach a list item. Do not require a
+                # button because LinkedIn may render the action as a link or a
+                # different interactive element.
+                card = link.locator("xpath=ancestor::li[1]")
+                if card.count() == 0:
+                    # Fallback: nearest ancestor with useful result text.
+                    card = link.locator("xpath=ancestor::*[self::div or self::section][1]")
+
+                text = card.inner_text(timeout=1500).strip()
+                if not text:
                     continue
 
-                text = item.inner_text(timeout=1500).strip()
-                lower = text.lower()
-                if not any(x in lower for x in (
-                    "connect", "pending", "follow", "current:", "past:"
-                )):
-                    continue
+                seen.add(href)
+                cards.append((card, href))
 
-                # There can be several nested <li> elements for one result.
-                # Keep the smallest useful one, which is normally the actual card.
-                existing = candidates.get(href)
-                if existing is None:
-                    candidates[href] = (item, len(text))
-                elif len(text) < existing[1]:
-                    candidates[href] = (item, len(text))
+                if len(cards) >= max_results:
+                    break
             except Exception:
                 continue
 
-        cards = [(item, href) for href, (item, _) in candidates.items()]
-        cards = cards[:max_results]
-
         print(f"Search cards found: {len(cards)}")
-        if link_count and not cards:
-            print("WARNING: Profile links were found, but no result cards matched.")
+
+        # Diagnostic: show a small sample so DOM/parsing failures are obvious.
+        for n, (card, href) in enumerate(cards[:3], start=1):
+            try:
+                text = " | ".join(x.strip() for x in card.inner_text().splitlines() if x.strip())
+                print(f"  Card {n}: {text[:350]}")
+            except Exception:
+                pass
+
         return cards
+
     def search_results(self, term, location, max_results=MAX_RESULTS_PER_TERM):
         self.open_people_search(term, location)
         return [r for card, _ in self.get_search_cards(max_results) if (r:=self._parse_search_card(card))]
@@ -105,33 +115,89 @@ class LinkedInClient:
         m=re.match(r"(.+?)\s+at\s+(.+)$", value, re.I)
         return (m.group(1).strip(),m.group(2).strip()) if m else (value,"")
     def _relationship(self, card, lines):
+        """Read LinkedIn's connection state from accessible labels or visible text.
+
+        In the supplied LinkedIn HTML, the Connect/Pending action is rendered as
+        an <a> element, not a <button>. The aria-label is therefore the most
+        reliable signal, for example: 'Pending, click to withdraw invitation...'
+        or 'Connect with ...'.
+        """
         try:
-            buttons=card.get_by_role("button")
-            labels=[]
-            for i in range(buttons.count()):
-                b=buttons.nth(i); labels.append(((b.get_attribute("aria-label") or b.inner_text()).strip()).lower())
+            candidates = card.locator("a[aria-label], button[aria-label], [role=button][aria-label]")
+            labels = []
+            for i in range(candidates.count()):
+                el = candidates.nth(i)
+                label = (el.get_attribute("aria-label") or el.inner_text() or "").strip().lower()
+                if label:
+                    labels.append(label)
             for label in labels:
-                if re.search(r"\bpending\b",label): return "PENDING"
-                if re.search(r"\bconnected\b",label): return "CONNECTED"
-                if re.search(r"\bconnect\b",label): return "CONNECT_AVAILABLE"
-                if re.search(r"\bmessage\b",label): return "MESSAGE_ONLY"
-                if re.search(r"\bfollow\b",label): return "FOLLOW_ONLY"
-        except Exception: pass
-        text=" ".join(lines).lower()
-        if re.search(r"\bpending\b",text): return "PENDING"
-        if re.search(r"\bconnected\b",text): return "CONNECTED"
+                if re.search(r"\bpending\b", label): return "PENDING"
+                if re.search(r"\bconnected\b", label): return "CONNECTED"
+                if re.search(r"\bconnect\b", label): return "CONNECT_AVAILABLE"
+                if re.search(r"\bmessage\b", label): return "MESSAGE_ONLY"
+                if re.search(r"\bfollow\b", label): return "FOLLOW_ONLY"
+        except Exception:
+            pass
+
+        text = " ".join(lines).lower()
+        if re.search(r"\bpending\b", text): return "PENDING"
+        if re.search(r"\bconnected\b", text): return "CONNECTED"
+        if re.search(r"(?<!un)\bconnect\b", text): return "CONNECT_AVAILABLE"
+        if re.search(r"\bfollow\b", text): return "FOLLOW_ONLY"
         return "UNKNOWN"
+
+    def _connect_action_in_card(self, card):
+        """Return LinkedIn's Connect action whether it is an anchor or button."""
+        selectors = [
+            'a[aria-label^="Connect"]',
+            'button[aria-label^="Connect"]',
+            '[role="button"][aria-label^="Connect"]',
+        ]
+        for selector in selectors:
+            loc = card.locator(selector).first
+            if loc.count() > 0:
+                return loc
+
+        # Fallback to visible text. LinkedIn may render Connect inside a span
+        # within the action anchor. Playwright text matching is case-insensitive.
+        loc = card.get_by_text(re.compile(r"^connect$", re.I)).first
+        if loc.count() > 0:
+            return loc
+        return None
+
     def click_connect_on_card(self, profile_url):
         for card, href in self.get_search_cards(MAX_RESULTS_PER_TERM):
-            if href==profile_url:
-                btn=card.get_by_role("button",name=re.compile(r"^connect$",re.I)).first
-                if btn.count()>0: btn.click(); self.page.wait_for_timeout(700); return True
+            if href != profile_url:
+                continue
+            action = self._connect_action_in_card(card)
+            if action is None:
+                return False
+            try:
+                action.click()
+                self.page.wait_for_timeout(700)
+                return True
+            except Exception:
+                return False
         return False
+
     def click_connect_profile_fallback(self, profile_url):
-        self.page.goto(profile_url,wait_until="domcontentloaded"); self.page.wait_for_timeout(1200)
-        btn=self.page.get_by_role("button",name=re.compile(r"^connect$",re.I)).first
-        if btn.count()==0:return False
-        btn.click(); self.page.wait_for_timeout(700); return True
+        self.page.goto(profile_url, wait_until="domcontentloaded")
+        self.page.wait_for_timeout(1200)
+        candidates = [
+            self.page.get_by_role("button", name=re.compile(r"^connect$", re.I)).first,
+            self.page.locator('a[aria-label^="Connect"]').first,
+            self.page.locator('[role="button"][aria-label^="Connect"]').first,
+            self.page.get_by_text(re.compile(r"^connect$", re.I)).first,
+        ]
+        for btn in candidates:
+            try:
+                if btn.count() > 0:
+                    btn.click()
+                    self.page.wait_for_timeout(700)
+                    return True
+            except Exception:
+                continue
+        return False
     def prepare_connection_note(self,message):
         try:
             add=self.page.get_by_role("button",name=re.compile(r"add a note",re.I)).first

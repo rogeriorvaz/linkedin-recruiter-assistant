@@ -39,3 +39,6 @@ NEGATIVE_CURRENT_TERMS = [
     "solutions architect", "technical architect",
 ]
 RECRUITMENT_COMPANY_TERMS = ["recruitment", "recruiting", "staffing", "talent", "resourcing", "executive search"]
+
+SEARCH_DELAY_MIN_SECONDS = 10
+SEARCH_DELAY_MAX_SECONDS = 30

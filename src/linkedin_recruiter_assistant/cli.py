@@ -1,6 +1,9 @@
 import random
 
-from .config import (HEADLESS, MAX_RECRUITERS_PER_SESSION, MAX_RESULTS_PER_TERM, RECRUITERS_CSV, SEARCH_LOCATION, SEARCH_TERMS, SEARCH_DELAY_MIN_SECONDS, SEARCH_DELAY_MAX_SECONDS)
+from .config import (
+    HEADLESS, MAX_RECRUITERS_PER_SESSION, MAX_RESULTS_PER_TERM, RECRUITERS_CSV,
+    SEARCH_LOCATION, SEARCH_TERMS, SEARCH_DELAY_MIN_SECONDS, SEARCH_DELAY_MAX_SECONDS,
+)
 from .csv_store import CsvStore
 from .linkedin import LinkedInClient
 from .messages import connection_message
@@ -17,21 +20,15 @@ def main():
     client=LinkedInClient(HEADLESS)
     try:
         client.start(); print("Log into LinkedIn manually if required."); print("Complete any verification or security checks manually."); client.wait_for_manual_login()
-        processed_count=0; seen=set(store.load_all())
+        processed_count=0; qualified_count=0; seen=set(store.load_all())
         for index, term in enumerate(SEARCH_TERMS):
             if processed_count>=MAX_RECRUITERS_PER_SESSION: break
-            # Random pause between search terms, but not before the first search.
+
             if index > 0:
-                delay = random.uniform(
-                    SEARCH_DELAY_MIN_SECONDS,
-                    SEARCH_DELAY_MAX_SECONDS,
-                )
+                delay = random.uniform(SEARCH_DELAY_MIN_SECONDS, SEARCH_DELAY_MAX_SECONDS)
+                print(f"\nWaiting {delay:.1f} seconds before searching: {term}")
+                client.page.wait_for_timeout(int(delay * 1000))
 
-                print(
-                    f"\nWaiting {delay:.1f} seconds before searching: {term}"
-                )
-
-                client.page.wait_for_timeout(int(delay * 1000))            
             print(f"Searching: {term}")
             client.open_people_search(term, SEARCH_LOCATION)
             cards=client.get_search_cards(MAX_RESULTS_PER_TERM)
@@ -47,6 +44,7 @@ def main():
                 if not is_current_recruiter(recruiter.current_role,recruiter.current_company,recruiter.headline):
                     store.record_action(recruiter,"rejected_not_current_recruiter",True); continue
                 recruiter.score,recruiter.reason=score_recruiter(recruiter); store.save_recruiter(recruiter,"qualified",False)
+                qualified_count += 1
                 if recruiter.relationship_status!="CONNECT_AVAILABLE":
                     store.record_action(recruiter,f"skipped_{recruiter.relationship_status.lower()}",True); continue
                 print("\n"+"="*72); print(recruiter.name); print("="*72)
@@ -65,5 +63,7 @@ def main():
                 input("Press ENTER here after sending the connection request...")
                 store.record_action(recruiter,"connection_requested",True); processed_count+=1
                 print(f"✓ Saved to CSV: {RECRUITERS_CSV}")
-        print(f"\nQualified/processed recruiters this session: {processed_count}"); print(f"Finished. CSV records: {store.count()}")
+        print(f"\nQualified recruiters found this session: {qualified_count}")
+        print(f"Connection requests sent this session: {processed_count}")
+        print(f"Finished. CSV records: {store.count()}")
     finally: client.stop()

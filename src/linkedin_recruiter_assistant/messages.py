@@ -1,13 +1,7 @@
-"""Connection message generation."""
-
-
-def create_connection_message(name: str) -> str:
-    first_name = (name or "there").split()[0]
-
+def connection_message(first_name: str) -> str:
     return (
-        f"Hi {first_name}, I’m currently exploring senior technology "
-        f"delivery opportunities and noticed you specialise in technology "
-        f"recruitment. I have 20+ years’ experience across software delivery, "
-        f"Agile, Waterfall, Hybrid delivery and technical leadership. "
-        f"I’d be glad to connect."
+        f"Hi {first_name}, I’m currently exploring senior technology delivery opportunities "
+        "and noticed you specialise in technology recruitment. I have 20+ years’ experience "
+        "across software delivery, Agile, Waterfall, Hybrid delivery and technical leadership. "
+        "I’d be glad to connect."
     )

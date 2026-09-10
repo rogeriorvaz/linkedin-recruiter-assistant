@@ -1,4 +1,6 @@
-.venv/*
-path/*
-src/linkedin_recruiter_assistant/__pycache__/*
-src/linkedin_recruiter_assistant.egg-info/*
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/recruiters.csv
+linkedin_recruiter_assistant.egg-info/

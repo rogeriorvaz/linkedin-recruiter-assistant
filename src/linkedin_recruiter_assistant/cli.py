@@ -1,293 +1,96 @@
-"""Interactive command-line workflow."""
-
-from playwright.sync_api import sync_playwright
-
 from .config import (
-    HEADLESS,
-    MAX_DELAY_SECONDS,
-    MAX_RECRUITERS_PER_SESSION,
-    MIN_DELAY_SECONDS,
-    RECRUITERS_CSV,
-    SEARCH_TERMS,
+    HEADLESS, MAX_RECRUITERS_PER_SESSION, MAX_RESULTS_PER_TERM,
+    RECRUITERS_CSV, SEARCH_LOCATION, SEARCH_TERMS,
 )
-from .csv_store import RecruiterStore
-from .linkedin import (
-    collect_search_results,
-    inspect_profile,
-    login,
-    random_delay,
-)
-from .messages import create_connection_message
+from .csv_store import CsvStore
+from .linkedin import LinkedInClient
+from .messages import connection_message
 from .recruiter import Recruiter, is_current_recruiter
 from .scoring import score_recruiter
 
 
-def display_recruiter(
-    recruiter: Recruiter,
-) -> None:
-    print()
-    print("=" * 72)
-    print(recruiter.name)
-    print("=" * 72)
-    print(f"Profile: {recruiter.profile_url}")
-    print(f"Headline: {recruiter.headline}")
-    print(f"Current role: {recruiter.current_role}")
-    print(f"Company: {recruiter.current_company}")
-    print(f"Location: {recruiter.location}")
-    print(
-        f"Relationship: "
-        f"{recruiter.relationship_status}"
-    )
-    print(f"Score: {recruiter.score}")
-    print(f"Reason: {recruiter.reason}")
-    print()
-    print("Suggested message:")
-    print(create_connection_message(recruiter.name))
-    print()
-    print("C = manually Connect")
-    print("S = skip")
-    print("M = manual review")
-    print("Q = quit")
-
-
-def main() -> None:
-    store = RecruiterStore(RECRUITERS_CSV)
-
-    existing = store.load_all()
-
-    print("=" * 72)
-    print("LinkedIn UK IT Recruiter Assistant")
-    print("=" * 72)
+def main():
+    store = CsvStore(RECRUITERS_CSV)
     print(f"Recruiter file: {RECRUITERS_CSV}")
-    print(f"Recruiters recorded: {len(existing)}")
-    print(
-        f"Previously processed: "
-        f"{len(store.processed_urls())}"
-    )
+    print(f"CSV exists: {'YES' if RECRUITERS_CSV.exists() else 'NO'}")
+    print(f"CSV records: {store.count()}")
+    print(f"Previously processed: {sum(1 for r in store.load_all().values() if r.get('last_processed'))}")
     print()
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=HEADLESS
-        )
+    client = LinkedInClient(headless=HEADLESS)
+    try:
+        client.start()
+        print("Log into LinkedIn manually if required.")
+        print("Complete any verification or security checks manually.")
+        client.wait_for_manual_login()
 
-        context = browser.new_context(
-            viewport={
-                "width": 1440,
-                "height": 1000,
-            }
-        )
+        discovered = []
+        seen = set(store.load_all())
+        for term in SEARCH_TERMS:
+            print(f"Searching: {term}")
+            for url in client.search(term, SEARCH_LOCATION, MAX_RESULTS_PER_TERM):
+                if url in seen:
+                    continue
+                seen.add(url)
+                discovered.append(url)
 
-        page = context.new_page()
+        print(f"Unique candidates discovered: {len(discovered)}")
 
-        try:
-            login(page)
+        qualified = []
+        for url in discovered:
+            try:
+                recruiter = client.inspect_profile(url)
+                # Save discovery immediately, even if later rejected.
+                store.save_recruiter(recruiter, action="discovered", processed=False)
 
-            candidates = {}
-
-            for search_term in SEARCH_TERMS:
-                print(f"Searching: {search_term}")
-
-                results = collect_search_results(
-                    page,
-                    search_term,
-                )
-
-                for recruiter in results:
-                    candidates.setdefault(
-                        recruiter.profile_url,
-                        recruiter,
-                    )
-
-            print(
-                f"\nUnique candidates discovered: "
-                f"{len(candidates)}"
-            )
-
-            qualified = []
-
-            for recruiter in candidates.values():
-
-                if store.is_processed(
-                    recruiter.profile_url
-                ):
-                    print(
-                        f"Skipping processed: "
-                        f"{recruiter.name}"
-                    )
+                if not is_current_recruiter(recruiter.current_role, recruiter.current_company):
+                    store.record_action(recruiter, "rejected_not_current_recruiter", processed=True)
                     continue
 
-                try:
-                    inspect_profile(
-                        page,
-                        recruiter,
-                    )
+                recruiter.score, recruiter.reason = score_recruiter(recruiter)
+                store.save_recruiter(recruiter, action="qualified", processed=False)
 
-                    if not is_current_recruiter(
-                        recruiter
-                    ):
-                        recruiter.reason = (
-                            "not a current IT/technology recruiter"
-                        )
-                        store.save(recruiter)
-                        store.record_action(
-                            recruiter,
-                            "rejected",
-                        )
-                        continue
+                if recruiter.relationship_status != "CONNECT_AVAILABLE":
+                    store.record_action(recruiter, f"skipped_{recruiter.relationship_status.lower()}", processed=True)
+                    continue
 
-                    score_recruiter(
-                        recruiter
-                    )
-
-                    store.save(recruiter)
-
-                    if recruiter.relationship_status == "CONNECTED":
-                        store.record_action(
-                            recruiter,
-                            "connected",
-                        )
-                        continue
-
-                    if recruiter.relationship_status == "PENDING":
-                        store.record_action(
-                            recruiter,
-                            "pending",
-                        )
-                        continue
-
-                    if recruiter.score >= 7:
-                        qualified.append(recruiter)
-                    else:
-                        store.record_action(
-                            recruiter,
-                            "rejected",
-                        )
-
-                except Exception as exc:
-                    print(
-                        f"Inspection error for "
-                        f"{recruiter.name}: {exc}"
-                    )
-
-            qualified.sort(
-                key=lambda item: item.score,
-                reverse=True,
-            )
-
-            qualified = qualified[
-                :MAX_RECRUITERS_PER_SESSION
-            ]
-
-            print()
-            print(
-                f"Qualified recruiters for this session: "
-                f"{len(qualified)}"
-            )
-
-            for recruiter in qualified:
-
-                page.goto(
-                    recruiter.profile_url,
-                    wait_until="domcontentloaded",
-                )
-
-                display_recruiter(
-                    recruiter
-                )
-
-                while True:
-                    choice = input(
-                        "Choice: "
-                    ).strip().lower()
-
-                    if choice in {
-                        "c",
-                        "s",
-                        "m",
-                        "q",
-                    }:
-                        break
-
-                if choice == "q":
-                    store.record_action(
-                        recruiter,
-                        "quit",
-                    )
-                    print(
-                        "Session stopped. "
-                        "Progress is stored in the CSV."
-                    )
+                qualified.append(recruiter)
+                if len(qualified) >= MAX_RECRUITERS_PER_SESSION:
                     break
+            except Exception as exc:
+                print(f"Could not inspect {url}: {exc}")
 
-                if choice == "s":
-                    store.record_action(
-                        recruiter,
-                        "skipped",
-                    )
+        print(f"Qualified recruiters for this session: {len(qualified)}")
 
-                    random_delay(
-                        MIN_DELAY_SECONDS,
-                        MAX_DELAY_SECONDS,
-                    )
-                    continue
+        for recruiter in qualified:
+            print("\\n" + "=" * 72)
+            print(recruiter.name)
+            print("=" * 72)
+            print(f"Profile: {recruiter.profile_url}")
+            print(f"Current role: {recruiter.current_role}")
+            print(f"Company: {recruiter.current_company}")
+            print(f"Location: {recruiter.location}")
+            print(f"Relationship: {recruiter.relationship_status}")
+            print(f"Score: {recruiter.score}")
+            print(f"Reason: {recruiter.reason}")
+            message = connection_message(recruiter.first_name)
+            print("\\nSuggested message:\n")
+            print(message)
 
-                if choice == "m":
-                    input(
-                        "Inspect the profile manually, "
-                        "then press ENTER..."
-                    )
+            try:
+                store.record_action(recruiter, "preparing_connection", processed=False)
+                client.connect_and_prepare_message(message)
+                print("\\n✓ Connect clicked")
+                print("✓ Add a note opened")
+                print("✓ Message entered")
+                print("\\nReview the message and click SEND in LinkedIn.")
+                input("Press ENTER here after sending the connection request...")
+                store.record_action(recruiter, "connection_requested", processed=True)
+                print(f"✓ Saved to CSV: {RECRUITERS_CSV}")
+            except Exception as exc:
+                print(f"Connection workflow failed: {exc}")
+                store.record_action(recruiter, "connection_workflow_failed", processed=True)
 
-                    store.record_action(
-                        recruiter,
-                        "manual_review",
-                    )
-
-                    random_delay(
-                        MIN_DELAY_SECONDS,
-                        MAX_DELAY_SECONDS,
-                    )
-                    continue
-
-                print()
-                print(
-                    "Click Connect manually in the browser."
-                )
-                print(
-                    "If Add a note appears, paste the "
-                    "suggested message."
-                )
-                print(
-                    "Do not use Message."
-                )
-
-                input(
-                    "Press ENTER after completing "
-                    "the connection request..."
-                )
-
-                store.record_action(
-                    recruiter,
-                    "manually_connected",
-                )
-
-                random_delay(
-                    MIN_DELAY_SECONDS,
-                    MAX_DELAY_SECONDS,
-                )
-
-        except KeyboardInterrupt:
-            print(
-                "\nInterrupted. "
-                "Progress has already been saved."
-            )
-
-        finally:
-            context.close()
-            browser.close()
-
-    print()
-    print("Session complete.")
-    print(
-        f"Recruiter data: {RECRUITERS_CSV}"
-    )
+        print(f"\\nFinished. CSV records: {store.count()}")
+    finally:
+        client.stop()

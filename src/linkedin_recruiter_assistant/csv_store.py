@@ -1,200 +1,63 @@
-"""CSV persistence for recruiter records.
-
-CSV is deliberately used instead of a database because this project is
-small, single-user, and benefits from a human-readable/editable data file.
-"""
-
 import csv
-from datetime import datetime
+import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from .recruiter import Recruiter, now_iso
 
-from .recruiter import Recruiter
-
-
-FIELDNAMES = [
-    "profile_url",
-    "name",
-    "headline",
-    "current_role",
-    "current_company",
-    "location",
-    "relationship_status",
-    "score",
-    "reason",
-    "action",
-    "first_seen",
-    "last_seen",
-    "last_processed",
+FIELDS = [
+    "profile_url", "name", "headline", "current_role", "current_company", "location",
+    "relationship_status", "score", "reason", "action", "first_seen", "last_seen", "last_processed",
 ]
 
 
-def now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-class RecruiterStore:
-    def __init__(self, path: str | Path):
+class CsvStore:
+    def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_file()
 
-    def _ensure_file(self) -> None:
-        if self.path.exists():
-            return
+    def _ensure_file(self):
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            self._write_rows([])
 
-        with self.path.open(
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as file:
-            writer = csv.DictWriter(
-                file,
-                fieldnames=FIELDNAMES,
-            )
-            writer.writeheader()
+    def load_all(self) -> dict[str, dict]:
+        with self.path.open("r", encoding="utf-8", newline="") as f:
+            return {row["profile_url"]: row for row in csv.DictReader(f) if row.get("profile_url")}
 
-    def load_all(self) -> dict[str, Recruiter]:
-        recruiters = {}
-
-        with self.path.open(
-            "r",
-            newline="",
-            encoding="utf-8",
-        ) as file:
-            reader = csv.DictReader(file)
-
-            for row in reader:
-                url = (row.get("profile_url") or "").strip()
-
-                if not url:
-                    continue
-
-                recruiters[url] = Recruiter(
-                    name=row.get("name", ""),
-                    profile_url=url,
-                    headline=row.get("headline", ""),
-                    current_role=row.get("current_role", ""),
-                    current_company=row.get("current_company", ""),
-                    location=row.get("location", ""),
-                    relationship_status=row.get(
-                        "relationship_status",
-                        "UNKNOWN",
-                    ),
-                    score=int(row.get("score") or 0),
-                    reason=row.get("reason", ""),
-                    action=row.get("action", ""),
-                    first_seen=row.get("first_seen", ""),
-                    last_seen=row.get("last_seen", ""),
-                    last_processed=row.get(
-                        "last_processed",
-                        "",
-                    ),
-                )
-
-        return recruiters
-
-    def get(self, profile_url: str) -> Recruiter | None:
-        return self.load_all().get(profile_url)
-
-    def save(self, recruiter: Recruiter) -> None:
-        records = self.load_all()
-        existing = records.get(recruiter.profile_url)
-
-        timestamp = now()
-
-        if not recruiter.first_seen:
-            recruiter.first_seen = (
-                existing.first_seen
-                if existing and existing.first_seen
-                else timestamp
-            )
-
-        recruiter.last_seen = timestamp
-
-        records[recruiter.profile_url] = recruiter
-
-        self._write(records.values())
-
-    def record_action(
-        self,
-        recruiter: Recruiter,
-        action: str,
-    ) -> None:
-        records = self.load_all()
-
-        existing = records.get(recruiter.profile_url)
-
-        if existing:
-            recruiter.first_seen = existing.first_seen
-
-        recruiter.action = action
-        recruiter.last_processed = now()
-        recruiter.last_seen = now()
-
-        records[recruiter.profile_url] = recruiter
-
-        self._write(records.values())
+    def count(self) -> int:
+        return len(self.load_all())
 
     def is_processed(self, profile_url: str) -> bool:
-        recruiter = self.get(profile_url)
+        row = self.load_all().get(profile_url)
+        return bool(row and row.get("last_processed"))
 
-        if not recruiter:
-            return False
+    def save_recruiter(self, recruiter: Recruiter, action: str | None = None, processed: bool = False):
+        rows = self.load_all()
+        existing = rows.get(recruiter.profile_url, {})
+        recruiter.first_seen = existing.get("first_seen") or recruiter.first_seen
+        recruiter.last_seen = now_iso()
+        if action:
+            recruiter.action = action
+        if processed:
+            recruiter.last_processed = now_iso()
+        rows[recruiter.profile_url] = {field: str(getattr(recruiter, field, "") or "") for field in FIELDS}
+        self._write_rows(list(rows.values()))
+        self._verify_saved(recruiter.profile_url)
 
-        return recruiter.action in {
-            "manually_connected",
-            "skipped",
-            "rejected",
-            "pending",
-            "connected",
-        }
+    def record_action(self, recruiter: Recruiter, action: str, processed: bool = True):
+        self.save_recruiter(recruiter, action=action, processed=processed)
 
-    def processed_urls(self) -> set[str]:
-        records = self.load_all()
-
-        return {
-            url
-            for url, recruiter in records.items()
-            if recruiter.action in {
-                "manually_connected",
-                "skipped",
-                "rejected",
-                "pending",
-                "connected",
-            }
-        }
-
-    def _write(self, recruiters) -> None:
-        temporary = self.path.with_suffix(".tmp")
-
-        with temporary.open(
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as file:
-            writer = csv.DictWriter(
-                file,
-                fieldnames=FIELDNAMES,
-            )
-
+    def _write_rows(self, rows: list[dict]):
+        with NamedTemporaryFile("w", encoding="utf-8", newline="", dir=self.path.parent, delete=False) as tmp:
+            writer = csv.DictWriter(tmp, fieldnames=FIELDS)
             writer.writeheader()
+            writer.writerows(rows)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            temp_name = tmp.name
+        os.replace(temp_name, self.path)
 
-            for recruiter in sorted(
-                recruiters,
-                key=lambda item: (
-                    item.last_seen,
-                    item.name.lower(),
-                ),
-            ):
-                writer.writerow(
-                    {
-                        field: getattr(
-                            recruiter,
-                            field,
-                            "",
-                        )
-                        for field in FIELDNAMES
-                    }
-                )
-
-        temporary.replace(self.path)
+    def _verify_saved(self, profile_url: str):
+        rows = self.load_all()
+        if profile_url not in rows:
+            raise IOError(f"CSV write verification failed for {profile_url}")

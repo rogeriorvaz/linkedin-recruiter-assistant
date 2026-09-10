@@ -1,12 +1,13 @@
-"""Application configuration."""
-
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 RECRUITERS_CSV = DATA_DIR / "recruiters.csv"
 
 SEARCH_LOCATION = "United Kingdom"
+MAX_RESULTS_PER_TERM = 20
+MAX_RECRUITERS_PER_SESSION = 10
+HEADLESS = False
 
 SEARCH_TERMS = [
     "IT Recruiter",
@@ -20,80 +21,28 @@ SEARCH_TERMS = [
     "Technical Talent Partner",
 ]
 
-MAX_SEARCH_RESULTS_PER_TERM = 20
-MAX_RECRUITERS_PER_SESSION = 10
-
-MIN_DELAY_SECONDS = 3
-MAX_DELAY_SECONDS = 20
-
-HEADLESS = False
-
 CURRENT_RECRUITER_TERMS = [
-    "it recruiter",
-    "technology recruiter",
-    "technical recruiter",
-    "tech recruiter",
-    "it recruitment",
-    "technology recruitment",
-    "technical recruitment",
-    "recruitment consultant",
-    "talent acquisition",
-    "technical talent",
-    "technology talent",
-    "talent partner",
-    "resourcing consultant",
+    "it recruiter", "technology recruiter", "technical recruiter", "tech recruiter",
+    "it recruitment", "technology recruitment", "technical recruitment",
+    "recruitment consultant", "talent acquisition", "technical talent",
+    "technology talent", "talent partner", "resourcing consultant",
 ]
 
 TECHNOLOGY_TERMS = [
-    "technology",
-    "technical",
-    "information technology",
-    "software",
-    "engineering",
-    "cloud",
-    "data",
-    "cyber",
-    "digital",
-    "infrastructure",
-    "devops",
-    "development",
-    "it",
+    "technology", "technical", "information technology", "software", "engineering",
+    "cloud", "data", "cyber", "digital", "infrastructure", "devops", "development", "it",
 ]
 
-SENIOR_TERMS = [
-    "senior",
-    "lead",
-    "principal",
-    "manager",
-    "director",
-    "head",
-    "partner",
-]
+SENIOR_TERMS = ["senior", "lead", "principal", "manager", "director", "head", "partner"]
 
 NEGATIVE_CURRENT_TERMS = [
-    "software engineer",
-    "software developer",
-    "developer",
-    "project manager",
-    "programme manager",
-    "program manager",
-    "delivery manager",
-    "delivery lead",
-    "scrum master",
-    "product manager",
-    "product owner",
-    "business analyst",
-    "solutions architect",
-    "technical architect",
-    "consultant",
+    "software engineer", "software developer", "developer", "project manager",
+    "programme manager", "program manager", "delivery manager", "delivery lead",
+    "scrum master", "product manager", "product owner", "business analyst",
+    "solutions architect", "technical architect", "consultant",
 ]
 
 RECRUITMENT_COMPANY_TERMS = [
-    "recruitment",
-    "recruiting",
-    "staffing",
-    "talent",
-    "resourcing",
-    "executive search",
+    "recruitment", "recruiting", "staffing", "talent", "resourcing", "executive search",
     "technology recruitment",
 ]

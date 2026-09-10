@@ -1,36 +1,21 @@
 # LinkedIn Recruiter Assistant
 
-Browser-assisted research and connection workflow for finding relevant UK technology recruiters on LinkedIn.
+The application uses LinkedIn People search results as the primary source. It does not open every recruiter profile to qualify the person.
 
-## Search-first workflow
+## Workflow
 
-The application now uses the LinkedIn **People search results page as the primary data source**. It does not open each recruiter profile just to determine whether the person is relevant.
+1. Search LinkedIn People results.
+2. Read each visible result card for name, headline, current role/company, location and relationship state.
+3. Save the result to CSV immediately.
+4. Qualify the recruiter from search-page evidence.
+5. Skip Pending, Connected, Follow-only and other unavailable relationships.
+6. Click Connect directly on the search result card.
+7. Fall back to the profile only if the search card has no usable Connect button.
+8. Open Add a note and enter the connection message.
+9. Stop so the user can review and click Send manually.
+10. Continue to the next recruiter after ENTER is pressed.
 
-From each search result card it reads:
-
-- Name
-- Headline
-- Current role and company when LinkedIn exposes a `Current:` line
-- Location
-- Connection state such as Connect, Pending or Connected
-- Profile URL
-
-A recruiter profile is opened only as a fallback when the search result card does not expose a usable Connect button.
-
-## Connection workflow
-
-For a qualified recruiter:
-
-1. Click **Connect** directly on the People search result card.
-2. If the card has no usable Connect button, open the profile and try Connect there.
-3. Click **Add a note**.
-4. Enter the generated connection message.
-5. Stop and wait for you to review and click **Send** manually.
-6. Press ENTER in the terminal after sending.
-7. Save the result to `data/recruiters.csv`.
-8. Continue immediately to the next recruiter.
-
-There is no artificial random delay.
+There is no random delay.
 
 ## Setup
 
@@ -47,20 +32,4 @@ playwright install chromium
 python -m linkedin_recruiter_assistant
 ```
 
-or:
-
-```bash
-linkedin-recruiter-assistant
-```
-
-## CSV persistence
-
-Recruiters are saved as soon as their People search result is parsed. They are then updated as they are qualified, skipped, or processed. Each write is verified.
-
-`data/recruiters.csv` is ignored by Git because it can contain personal recruiter information. Use `data/recruiters.example.csv` as the committed template.
-
-## LinkedIn UI changes
-
-LinkedIn can change its page structure and accessible labels. The People search parser therefore uses Playwright locators and conservative fallbacks. If the search card structure changes, `linkedin.py` is the main file that will need updating.
-
-The final **Send** action is intentionally manual.
+LinkedIn changes its DOM regularly. The search-card parser intentionally avoids relying on one LinkedIn CSS class. It starts from profile links and finds the nearest result ancestor containing action buttons. The final Send action remains manual.

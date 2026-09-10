@@ -1,13 +1,5 @@
 from linkedin_recruiter_assistant.recruiter import is_current_recruiter
 
-
-def test_current_recruiter():
-    assert is_current_recruiter("Technical Recruiter", "Index")
-
-
-def test_non_recruiter():
-    assert not is_current_recruiter("Software Engineer")
-
-
-def test_recommendation_text_is_not_role():
-    assert not is_current_recruiter("phenomenal talent partner, focuses on the needs of the customer")
+def test_current_role(): assert is_current_recruiter("Technical Recruiter","Index")
+def test_headline_can_qualify_when_current_line_missing(): assert is_current_recruiter("","", "Head of recruitment - Tech & IT")
+def test_delivery_manager_not_recruiter(): assert not is_current_recruiter("Delivery Manager","Adecco","IT and Technology Recruitment")

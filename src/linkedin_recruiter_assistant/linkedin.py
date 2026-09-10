@@ -4,216 +4,140 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from .config import HEADLESS, MAX_RESULTS_PER_TERM
 from .recruiter import Recruiter
 
-
 class LinkedInClient:
-    def __init__(self, headless: bool = HEADLESS):
-        self.headless = headless
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
-
+    def __init__(self, headless=HEADLESS): self.headless=headless; self.playwright=self.browser=self.context=self.page=None
     def start(self):
-        self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=self.headless)
-        self.context = self.browser.new_context(viewport={"width": 1440, "height": 1000})
-        self.page = self.context.new_page()
-        self.page.set_default_timeout(8000)
+        self.playwright=sync_playwright().start(); self.browser=self.playwright.chromium.launch(headless=self.headless)
+        self.context=self.browser.new_context(viewport={"width":1440,"height":1000}); self.page=self.context.new_page(); self.page.set_default_timeout(8000)
         self.page.goto("https://www.linkedin.com/", wait_until="domcontentloaded")
-
     def stop(self):
-        if self.context:
-            self.context.close()
-        if self.browser:
-            self.browser.close()
-        if self.playwright:
-            self.playwright.stop()
+        if self.context: self.context.close()
+        if self.browser: self.browser.close()
+        if self.playwright: self.playwright.stop()
+    def wait_for_manual_login(self): input("Press ENTER when LinkedIn is ready...")
+    def open_people_search(self, term, location):
+        url=f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(term)}&location={quote_plus(location)}"
+        self.page.goto(url, wait_until="domcontentloaded"); self.page.wait_for_timeout(2500)
+        self._wait_for_results()
+    def _wait_for_results(self):
+        try:
+            self.page.locator('a[href*="/in/"]').first.wait_for(timeout=10000)
+        except Exception:
+            pass
 
-    def wait_for_manual_login(self):
-        input("Press ENTER when LinkedIn is ready...")
+    def get_search_cards(self, max_results=MAX_RESULTS_PER_TERM):
+        """Find LinkedIn People search result cards without relying on CSS classes."""
+        profile_links = self.page.locator('a[href*="/in/"]')
+        link_count = profile_links.count()
+        print(f"Profile links found: {link_count}")
 
-    def open_people_search(self, term: str, location: str):
-        url = (
-            "https://www.linkedin.com/search/results/people/?keywords="
-            f"{quote_plus(term)}&location={quote_plus(location)}"
+        # Build candidate <li> elements containing profile links and buttons.
+        # LinkedIn's result-card class names change, but the result remains a
+        # list item with a profile link and an action button.
+        list_items = self.page.locator("li").filter(
+            has=self.page.locator('a[href*="/in/"]')
+        ).filter(
+            has=self.page.locator("button")
         )
-        self.page.goto(url, wait_until="domcontentloaded")
-        self.page.wait_for_timeout(2000)
 
-    def get_search_cards(self, max_results: int = MAX_RESULTS_PER_TERM) -> list:
-        """Return People search result cards without opening profiles."""
-        cards = self.page.locator("li.reusable-search__result-container")
-        if cards.count() == 0:
-            cards = self.page.locator("li").filter(has=self.page.locator('a[href*="/in/"]'))
+        candidates = {}
+        for i in range(list_items.count()):
+            item = list_items.nth(i)
+            try:
+                links = item.locator('a[href*="/in/"]')
+                if links.count() == 0:
+                    continue
 
-        results = []
-        seen_urls = set()
-        count = min(cards.count(), max_results)
-        for i in range(count):
-            card = cards.nth(i)
-            links = card.locator('a[href*="/in/"]')
-            if links.count() == 0:
+                href = (links.first.get_attribute("href") or "").split("?")[0].strip()
+                if not href:
+                    continue
+
+                text = item.inner_text(timeout=1500).strip()
+                lower = text.lower()
+                if not any(x in lower for x in (
+                    "connect", "pending", "follow", "current:", "past:"
+                )):
+                    continue
+
+                # There can be several nested <li> elements for one result.
+                # Keep the smallest useful one, which is normally the actual card.
+                existing = candidates.get(href)
+                if existing is None:
+                    candidates[href] = (item, len(text))
+                elif len(text) < existing[1]:
+                    candidates[href] = (item, len(text))
+            except Exception:
                 continue
-            url = links.first.get_attribute("href") or ""
-            url = url.split("?")[0]
-            if "/in/" not in url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-            results.append(card)
-        return results
 
-    def search_results(self, term: str, location: str, max_results: int = MAX_RESULTS_PER_TERM) -> list[Recruiter]:
-        """Extract recruiter information directly from People search result cards."""
+        cards = [(item, href) for href, (item, _) in candidates.items()]
+        cards = cards[:max_results]
+
+        print(f"Search cards found: {len(cards)}")
+        if link_count and not cards:
+            print("WARNING: Profile links were found, but no result cards matched.")
+        return cards
+    def search_results(self, term, location, max_results=MAX_RESULTS_PER_TERM):
         self.open_people_search(term, location)
-        recruiters = []
-        for card in self.get_search_cards(max_results):
-            recruiter = self._parse_search_card(card)
-            if recruiter:
-                recruiters.append(recruiter)
-        return recruiters
-
-    def _parse_search_card(self, card) -> Recruiter | None:
+        return [r for card, _ in self.get_search_cards(max_results) if (r:=self._parse_search_card(card))]
+    def _parse_search_card(self, card):
         try:
-            profile_url = (card.locator('a[href*="/in/"]').first.get_attribute("href") or "").split("?")[0]
-            text = card.inner_text(" ")
-        except Exception:
-            return None
-        if not profile_url:
-            return None
-
-        lines = [re.sub(r"\\s+", " ", x).strip() for x in card.inner_text().splitlines() if x.strip()]
-        name = self._extract_name(card, lines)
-        headline = self._extract_headline(lines, name)
-        location = self._extract_location(lines)
-        current_role, current_company = self._extract_current(lines)
-        relationship = self._extract_relationship(card, text)
-
-        return Recruiter(
-            name=name,
-            profile_url=profile_url,
-            headline=headline,
-            current_role=current_role,
-            current_company=current_company,
-            location=location,
-            relationship_status=relationship,
-        )
-
-    def _extract_name(self, card, lines):
-        try:
-            # The first profile link is normally the member's name.
-            value = card.locator('a[href*="/in/"]').first.inner_text().strip()
-            if value:
-                return re.sub(r"\\s+", " ", value)
-        except Exception:
-            pass
-        return lines[0] if lines else "Unknown"
-
-    def _extract_headline(self, lines, name):
-        for i, line in enumerate(lines):
-            if line.lower().startswith(name.lower()):
-                if i + 1 < len(lines):
-                    return lines[i + 1]
-        return lines[1] if len(lines) > 1 else ""
-
-    def _extract_location(self, lines):
-        for line in lines:
-            lower = line.lower()
-            if any(x in lower for x in ["united kingdom", "england", "scotland", "wales", "northern ireland"]):
-                return line
+            links=card.locator('a[href*="/in/"]'); profile_url=(links.first.get_attribute("href") or "").split("?")[0]
+            if not profile_url: return None
+            lines=[re.sub(r"\s+"," ",x).strip() for x in card.inner_text().splitlines() if x.strip()]
+            name=links.first.inner_text().strip() or (lines[0] if lines else "Unknown")
+            headline=self._headline(lines,name); location=self._location(lines); role,company=self._current(lines); rel=self._relationship(card, lines)
+            return Recruiter(name=name, profile_url=profile_url, headline=headline, current_role=role, current_company=company, location=location, relationship_status=rel)
+        except Exception: return None
+    def _headline(self, lines, name):
+        for i,x in enumerate(lines):
+            if x.lower().startswith(name.lower()) and i+1<len(lines): return lines[i+1]
+        return lines[1] if len(lines)>1 else ""
+    def _location(self, lines):
+        for x in lines:
+            if any(k in x.lower() for k in ["united kingdom","england","scotland","wales","northern ireland"]): return x
         return ""
-
-    def _extract_current(self, lines):
-        # Search cards commonly expose a line such as:
-        # Current: Technical Recruiter at Index
-        # Past: ...
-        # We deliberately only accept Current:, never Past: or page-wide text.
-        for line in lines:
-            if line.lower().startswith("current:"):
-                value = line.split(":", 1)[1].strip()
-                return self._split_role_company(value)
-        return "", ""
-
-    @staticmethod
-    def _split_role_company(value):
-        # Handles "Technical Recruiter at Index". Keep the role/company conservative.
-        match = re.match(r"(.+?)\\s+at\\s+(.+)$", value, flags=re.I)
-        if match:
-            return match.group(1).strip(), match.group(2).strip()
-        return value, ""
-
-    def _extract_relationship(self, card, text):
+    def _current(self, lines):
+        for x in lines:
+            if x.lower().startswith("current:"):
+                return self._split_role_company(x.split(":",1)[1].strip())
+        return "",""
+    def _split_role_company(self, value):
+        m=re.match(r"(.+?)\s+at\s+(.+)$", value, re.I)
+        return (m.group(1).strip(),m.group(2).strip()) if m else (value,"")
+    def _relationship(self, card, lines):
         try:
-            buttons = card.get_by_role("button")
+            buttons=card.get_by_role("button")
+            labels=[]
             for i in range(buttons.count()):
-                label = (buttons.nth(i).get_attribute("aria-label") or buttons.nth(i).inner_text()).strip().lower()
-                if re.search(r"\\bpending\\b", label):
-                    return "PENDING"
-                if re.search(r"\\bconnect\\b", label):
-                    return "CONNECT_AVAILABLE"
-                if re.search(r"\\bconnected\\b", label):
-                    return "CONNECTED"
-                if re.search(r"\\bmessage\\b", label):
-                    return "MESSAGE_ONLY"
-        except Exception:
-            pass
-
-        lower = text.lower()
-        if re.search(r"\\bpending\\b", lower):
-            return "PENDING"
-        if re.search(r"\\bconnected\\b", lower):
-            return "CONNECTED"
+                b=buttons.nth(i); labels.append(((b.get_attribute("aria-label") or b.inner_text()).strip()).lower())
+            for label in labels:
+                if re.search(r"\bpending\b",label): return "PENDING"
+                if re.search(r"\bconnected\b",label): return "CONNECTED"
+                if re.search(r"\bconnect\b",label): return "CONNECT_AVAILABLE"
+                if re.search(r"\bmessage\b",label): return "MESSAGE_ONLY"
+                if re.search(r"\bfollow\b",label): return "FOLLOW_ONLY"
+        except Exception: pass
+        text=" ".join(lines).lower()
+        if re.search(r"\bpending\b",text): return "PENDING"
+        if re.search(r"\bconnected\b",text): return "CONNECTED"
         return "UNKNOWN"
-
-    def click_connect_from_card(self, recruiter: Recruiter) -> bool:
-        """Find the search card for this recruiter and click its Connect button."""
-        card = self._find_card_by_profile_url(recruiter.profile_url)
-        if card is None:
-            return False
-        button = card.get_by_role("button", name=re.compile(r"^connect$", re.I)).first
-        if button.count() == 0:
-            return False
-        button.click()
-        self.page.wait_for_timeout(700)
-        return True
-
-    def _find_card_by_profile_url(self, profile_url: str):
-        cards = self.page.locator("li.reusable-search__result-container")
-        if cards.count() == 0:
-            cards = self.page.locator("li").filter(has=self.page.locator('a[href*="/in/"]'))
-        for i in range(cards.count()):
-            card = cards.nth(i)
-            links = card.locator('a[href*="/in/"]')
-            for j in range(links.count()):
-                href = (links.nth(j).get_attribute("href") or "").split("?")[0]
-                if href == profile_url:
-                    return card
-        return None
-
-    def connect_from_profile_fallback(self, profile_url: str) -> bool:
-        """Fallback only when the search card has no usable Connect button."""
-        self.page.goto(profile_url, wait_until="domcontentloaded")
-        self.page.wait_for_timeout(1200)
-        button = self.page.get_by_role("button", name=re.compile(r"^connect$", re.I)).first
-        if button.count() == 0:
-            return False
-        button.click()
-        self.page.wait_for_timeout(700)
-        return True
-
-    def prepare_connection_note(self, message: str) -> bool:
-        """Open Add a note and fill the message. Never clicks Send."""
+    def click_connect_on_card(self, profile_url):
+        for card, href in self.get_search_cards(MAX_RESULTS_PER_TERM):
+            if href==profile_url:
+                btn=card.get_by_role("button",name=re.compile(r"^connect$",re.I)).first
+                if btn.count()>0: btn.click(); self.page.wait_for_timeout(700); return True
+        return False
+    def click_connect_profile_fallback(self, profile_url):
+        self.page.goto(profile_url,wait_until="domcontentloaded"); self.page.wait_for_timeout(1200)
+        btn=self.page.get_by_role("button",name=re.compile(r"^connect$",re.I)).first
+        if btn.count()==0:return False
+        btn.click(); self.page.wait_for_timeout(700); return True
+    def prepare_connection_note(self,message):
         try:
-            add_note = self.page.get_by_role("button", name=re.compile(r"add a note", re.I)).first
-            if add_note.count() > 0:
-                add_note.click(timeout=5000)
-            else:
-                self.page.get_by_text(re.compile(r"^add a note$", re.I)).first.click(timeout=5000)
-        except PlaywrightTimeoutError:
-            return False
-
-        self.page.wait_for_timeout(500)
-        boxes = self.page.get_by_role("textbox")
-        if boxes.count() == 0:
-            return False
-        boxes.last.fill(message)
-        return True
+            add=self.page.get_by_role("button",name=re.compile(r"add a note",re.I)).first
+            if add.count()>0:add.click(timeout=5000)
+            else:self.page.get_by_text(re.compile(r"^add a note$",re.I)).first.click(timeout=5000)
+            self.page.wait_for_timeout(500); boxes=self.page.get_by_role("textbox")
+            if boxes.count()==0:return False
+            boxes.last.fill(message); return True
+        except PlaywrightTimeoutError:return False

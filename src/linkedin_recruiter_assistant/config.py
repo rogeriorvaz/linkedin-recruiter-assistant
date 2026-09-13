@@ -5,6 +5,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 RECRUITERS_CSV = DATA_DIR / "recruiters.csv"
 
 SEARCH_LOCATION = "United Kingdom"
+SEARCH_PAGE = 1
 MAX_RESULTS_PER_TERM = 20
 MAX_RECRUITERS_PER_SESSION = 10
 HEADLESS = False
@@ -15,6 +16,15 @@ SEARCH_TERMS = [
     "Tech Recruiter", "Technology Talent Acquisition", "IT Talent Acquisition",
     "Technical Talent Partner",
 ]
+
+# Local Ollama is used for semantic classification rather than exact title matching.
+OLLAMA_ENABLED = True
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_MODEL = "qwen3:32b"
+OLLAMA_TIMEOUT_SECONDS = 120
+
+SEARCH_DELAY_MIN_SECONDS = 10
+SEARCH_DELAY_MAX_SECONDS = 30
 
 CURRENT_RECRUITER_TERMS = [
     "it recruiter", "technology recruiter", "technical recruiter", "tech recruiter",
@@ -36,6 +46,3 @@ NEGATIVE_CURRENT_TERMS = [
     "solutions architect", "technical architect",
 ]
 RECRUITMENT_COMPANY_TERMS = ["recruitment", "recruiting", "staffing", "talent", "resourcing", "executive search"]
-
-SEARCH_DELAY_MIN_SECONDS = 10
-SEARCH_DELAY_MAX_SECONDS = 30

@@ -6,7 +6,7 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 def normalise(value):
-    return re.sub(r"\\s+", " ", (value or "").strip().lower())
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 def contains_any(text, terms):
     value = normalise(text)
